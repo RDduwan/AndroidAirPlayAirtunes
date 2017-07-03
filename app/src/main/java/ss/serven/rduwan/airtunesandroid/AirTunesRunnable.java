@@ -2,16 +2,29 @@ package ss.serven.rduwan.airtunesandroid;
 
 import android.util.Log;
 
+import org.jboss.netty.bootstrap.ServerBootstrap;
+import org.jboss.netty.channel.group.ChannelGroup;
+import org.jboss.netty.channel.group.DefaultChannelGroup;
+import org.jboss.netty.channel.socket.nio.NioServerSocketChannelFactory;
+
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import javax.jmdns.JmDNS;
 import javax.jmdns.ServiceInfo;
+
+import ss.serven.rduwan.airtunesandroid.network.raop.RaopRtsPipelineFactory;
 
 /**
  * Created by rduwan on 17/6/29.
@@ -44,7 +57,14 @@ public class AirTunesRunnable implements Runnable {
     /**
      * The AirTunes/RAOP RTSP port
      */
-    private int rtspPort = 5000; //default value
+    private int rtspPort;
+
+    private ExecutorService executorService;
+
+    /**
+     * All open RTSP channels. Used to close all open challens during shutdown.
+     */
+    protected ChannelGroup channelGroup;
 
     protected List<JmDNS> jmDNSList;
 
@@ -54,6 +74,9 @@ public class AirTunesRunnable implements Runnable {
 
     private AirTunesRunnable() {
         jmDNSList = new java.util.LinkedList<JmDNS>();
+        executorService = Executors.newCachedThreadPool();
+        channelGroup = new DefaultChannelGroup();
+        initRtspPort();
     }
 
     public synchronized static AirTunesRunnable getInstance() {
@@ -76,7 +99,28 @@ public class AirTunesRunnable implements Runnable {
                 onAppShutDown();
             }
         }));
+        startServer();
         sendMulitCastToiOS();
+    }
+
+    private void startServer() {
+        final ServerBootstrap airTunesBootstrap = new ServerBootstrap(new NioServerSocketChannelFactory(executorService, executorService));
+        airTunesBootstrap.setOption("reuseAddress", true); //端口重用
+        airTunesBootstrap.setOption("child.tcpNoDelay", true);
+        airTunesBootstrap.setOption("child.keepAlive", true); //保持连接
+        airTunesBootstrap.setPipelineFactory(new RaopRtsPipelineFactory());
+
+        try {channelGroup.add(airTunesBootstrap.bind(new InetSocketAddress(Inet4Address.getByName("0.0.0.0"), getRtspPort())));
+        }
+        catch (Exception e) {
+            Log.e(TAG, "error",e);
+            try {channelGroup.add(airTunesBootstrap.bind(new InetSocketAddress(Inet4Address.getByName("0.0.0.0"), getAnotherRtspPort())));
+                Log.i(TAG,"start server:0.0.0.0: port:" + getRtspPort() + " bind address success");
+            }
+            catch (Exception e1) {
+                Log.e(TAG, "error",e1);
+            }
+        }
     }
 
     /**
@@ -106,21 +150,25 @@ public class AirTunesRunnable implements Runnable {
                     for (final InetAddress address : Collections.list(networkInterface.getInetAddresses())) {
                         //端口是是ipv4 或者  ipv6 端口
                         if (address instanceof Inet4Address || address instanceof Inet6Address) {
+                            String addressStr = address + "";
+                            if (!addressStr.contains("192.")) {
+                                continue;
+                            }
                             try {
                                 final JmDNS jmDNS = JmDNS.create(address, hostName);
                                 jmDNSList.add(jmDNS);
-
                                 //构建AirTunes/RAOP （远程音频传输协议）服务
                                 final ServiceInfo airTunesServiceInfo = ServiceInfo.create(
                                         AIR_TUNES_SERVICE_TYPE,
                                         hardwareAddressString + "@" + hostName,
-                                        getRstpPort(),
+                                        getRtspPort(),
                                         0,
                                         0,
                                         AIRTUNES_SERVICE_PROPERTIES
                                 );
                                 jmDNS.registerService(airTunesServiceInfo);
-                                Log.d(TAG, "Success to publish service on " + address + ", port: " + getRstpPort());
+                                Log.d(TAG, "Success to publish service on " + address + ", port: " + getRtspPort());
+                                return;
                             } catch (final Throwable e) {
                                 Log.e(TAG, "Failed to publish service on " + address, e);
 
@@ -135,9 +183,18 @@ public class AirTunesRunnable implements Runnable {
         }
     }
 
-    public int getRstpPort() {
+    private void initRtspPort() {
+        rtspPort = new Random().nextInt(60000) + 5000;
+    }
+    public int getRtspPort() {
         return rtspPort;
     }
+
+    public int getAnotherRtspPort() {
+        rtspPort = rtspPort + 88;
+        return rtspPort;
+    }
+
 
     private void onAppShutDown() {
         /* Stop all mDNS responders */

@@ -29,5 +29,9 @@ dependencies {
     compile group: 'org.slf4j', name: 'slf4j-api', version: '1.7.21'
     testCompile 'junit:junit:4.12'
     compile files('libs/jmdns-3.5.0.jar')
+    compile 'org.jboss.netty:netty:3.2.4.Final'
+    compile 'org.bouncycastle:bcprov-ext-jdk16:1.46'
+    compile 'net.iharder:base64:2.3.8'
+    compile group: 'org.slf4j', name: 'slf4j-api', version: '1.7.21'
 
 }
