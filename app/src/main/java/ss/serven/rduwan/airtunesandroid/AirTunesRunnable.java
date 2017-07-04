@@ -3,9 +3,13 @@ package ss.serven.rduwan.airtunesandroid;
 import android.util.Log;
 
 import org.jboss.netty.bootstrap.ServerBootstrap;
+import org.jboss.netty.channel.ChannelHandler;
 import org.jboss.netty.channel.group.ChannelGroup;
+import org.jboss.netty.channel.group.ChannelGroupFuture;
 import org.jboss.netty.channel.group.DefaultChannelGroup;
 import org.jboss.netty.channel.socket.nio.NioServerSocketChannelFactory;
+import org.jboss.netty.handler.execution.ExecutionHandler;
+import org.jboss.netty.handler.execution.OrderedMemoryAwareThreadPoolExecutor;
 
 import java.net.Inet4Address;
 import java.net.Inet6Address;
@@ -61,6 +65,9 @@ public class AirTunesRunnable implements Runnable {
 
     private ExecutorService executorService;
 
+    //channelExecutionHandler
+    protected ExecutionHandler channelExecutionHandler;
+
     /**
      * All open RTSP channels. Used to close all open challens during shutdown.
      */
@@ -76,6 +83,7 @@ public class AirTunesRunnable implements Runnable {
         jmDNSList = new java.util.LinkedList<JmDNS>();
         executorService = Executors.newCachedThreadPool();
         channelGroup = new DefaultChannelGroup();
+        channelExecutionHandler = new ExecutionHandler(new OrderedMemoryAwareThreadPoolExecutor(4,0,0));
         initRtspPort();
     }
 
@@ -184,7 +192,7 @@ public class AirTunesRunnable implements Runnable {
     }
 
     private void initRtspPort() {
-        rtspPort = new Random().nextInt(60000) + 5000;
+        rtspPort = new Random().nextInt(1000) + 50000;//53xxx端口会在RaopAudioHandler中使用
     }
     public int getRtspPort() {
         return rtspPort;
@@ -195,8 +203,23 @@ public class AirTunesRunnable implements Runnable {
         return rtspPort;
     }
 
+    public ChannelHandler getChannelExecutionHandler() {
+        return channelExecutionHandler;
+    }
+
+    public ChannelGroup getChannelGroup() {
+        return channelGroup;
+    }
+
+    public ExecutorService getExecutorService() {
+        return executorService;
+    }
+
 
     private void onAppShutDown() {
+        /*Close channels*/
+        final ChannelGroupFuture allChannelClosed = channelGroup.close();
+
         /* Stop all mDNS responders */
         synchronized(jmDNSList) {
             for(final JmDNS jmDNS: jmDNSList) {
@@ -210,5 +233,11 @@ public class AirTunesRunnable implements Runnable {
                 }
             }
         }
+        //wait for all channels to finish closing
+        allChannelClosed.awaitUninterruptibly();
+
+        executorService.shutdown();
+
+        channelExecutionHandler.releaseExternalResources();
     }
 }
